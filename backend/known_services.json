@@ -1,0 +1,432 @@
+{
+  "analytics": {
+    "google-analytics.com": {
+      "name": "Google Analytics",
+      "jurisdiction": "United States",
+      "category": "Analytics",
+      "risk_level": "High",
+      "data_access": "IP addresses, browsing behavior, device info",
+      "alternatives_eu": ["Plausible (Estonia)", "Matomo (self-hosted)", "Pirsch (Germany)"]
+    },
+    "analytics.google.com": {
+      "name": "Google Analytics 4",
+      "jurisdiction": "United States",
+      "category": "Analytics",
+      "risk_level": "High",
+      "data_access": "User behavior, demographics, conversions",
+      "alternatives_eu": ["Plausible", "Matomo"]
+    },
+    "mixpanel.com": {
+      "name": "Mixpanel",
+      "jurisdiction": "United States",
+      "category": "Analytics",
+      "risk_level": "High",
+      "data_access": "User behavior, PII if configured",
+      "alternatives_eu": ["Pirsch (Germany)"]
+    },
+    "segment.com": {
+      "name": "Segment",
+      "jurisdiction": "United States",
+      "category": "Analytics",
+      "risk_level": "High",
+      "data_access": "All customer data, PII",
+      "alternatives_eu": ["RudderStack (has EU deployment)"]
+    },
+    "plausible.io": {
+      "name": "Plausible Analytics",
+      "jurisdiction": "Estonia (EU)",
+      "category": "Analytics",
+      "risk_level": "Low",
+      "data_access": "Minimal, no cookies",
+      "gdpr_compliant": true
+    },
+    "amplitude.com": {
+      "name": "Amplitude",
+      "jurisdiction": "United States",
+      "category": "Analytics",
+      "risk_level": "High",
+      "data_access": "Product analytics, user behavior"
+    },
+    "heap.io": {
+      "name": "Heap Analytics",
+      "jurisdiction": "United States",
+      "category": "Analytics",
+      "risk_level": "High",
+      "data_access": "Autocaptured user events, PII"
+    }
+  },
+  "fonts": {
+    "fonts.googleapis.com": {
+      "name": "Google Fonts",
+      "jurisdiction": "United States",
+      "category": "CDN/Fonts",
+      "risk_level": "Medium",
+      "data_access": "IP address shared with Google",
+      "alternatives_eu": ["Self-hosted fonts", "Bunny Fonts (Slovenia)"],
+      "notes": "German courts ruled this violates GDPR (2022)"
+    },
+    "fonts.gstatic.com": {
+      "name": "Google Fonts CDN",
+      "jurisdiction": "United States",
+      "category": "CDN/Fonts",
+      "risk_level": "Medium",
+      "data_access": "IP address",
+      "alternatives_eu": ["Bunny Fonts", "Self-hosted"]
+    },
+    "use.typekit.net": {
+      "name": "Adobe Fonts",
+      "jurisdiction": "United States",
+      "category": "CDN/Fonts",
+      "risk_level": "Medium",
+      "data_access": "IP address, usage data"
+    },
+    "fonts.bunny.net": {
+      "name": "Bunny Fonts",
+      "jurisdiction": "Slovenia (EU)",
+      "category": "CDN/Fonts",
+      "risk_level": "Low",
+      "gdpr_compliant": true
+    }
+  },
+  "customer_support": {
+    "intercom.io": {
+      "name": "Intercom",
+      "jurisdiction": "United States",
+      "category": "Customer Support",
+      "risk_level": "Critical",
+      "data_access": "Customer PII, conversation history, metadata",
+      "alternatives_eu": ["Crisp (France)", "Chatwoot (self-hosted)"]
+    },
+    "widget.intercom.io": {
+      "name": "Intercom Widget",
+      "jurisdiction": "United States",
+      "category": "Customer Support",
+      "risk_level": "Critical",
+      "data_access": "Real-time user behavior, PII"
+    },
+    "zendesk.com": {
+      "name": "Zendesk",
+      "jurisdiction": "United States",
+      "category": "Customer Support",
+      "risk_level": "High",
+      "data_access": "Support tickets, customer PII",
+      "alternatives_eu": ["Crisp", "Freshdesk (has EU region)"]
+    },
+    "crisp.chat": {
+      "name": "Crisp",
+      "jurisdiction": "France (EU)",
+      "category": "Customer Support",
+      "risk_level": "Low",
+      "data_access": "Customer conversations",
+      "gdpr_compliant": true
+    },
+    "drift.com": {
+      "name": "Drift",
+      "jurisdiction": "United States",
+      "category": "Customer Support",
+      "risk_level": "High",
+      "data_access": "Chat transcripts, visitor data"
+    },
+    "helpscout.com": {
+      "name": "Help Scout",
+      "jurisdiction": "United States",
+      "category": "Customer Support",
+      "risk_level": "High",
+      "data_access": "Email, customer data"
+    }
+  },
+  "payment": {
+    "stripe.com": {
+      "name": "Stripe",
+      "jurisdiction": "United States",
+      "category": "Payment Processing",
+      "risk_level": "Critical",
+      "data_access": "Payment data, PII, financial information",
+      "alternatives_eu": ["Mollie (Netherlands)", "GoCardless (UK)"],
+      "notes": "Has EU data centers but US company"
+    },
+    "js.stripe.com": {
+      "name": "Stripe.js",
+      "jurisdiction": "United States",
+      "category": "Payment Processing",
+      "risk_level": "Critical",
+      "data_access": "Card details, checkout behavior"
+    },
+    "paypal.com": {
+      "name": "PayPal",
+      "jurisdiction": "United States",
+      "category": "Payment Processing",
+      "risk_level": "Critical",
+      "data_access": "Financial data, transaction history"
+    },
+    "mollie.com": {
+      "name": "Mollie",
+      "jurisdiction": "Netherlands (EU)",
+      "category": "Payment Processing",
+      "risk_level": "Low",
+      "gdpr_compliant": true
+    }
+  },
+  "email": {
+    "sendgrid.com": {
+      "name": "SendGrid (Twilio)",
+      "jurisdiction": "United States",
+      "category": "Email Service",
+      "risk_level": "High",
+      "data_access": "Email content, recipient data",
+      "alternatives_eu": ["Postmark (has EU region)", "Brevo (France)"]
+    },
+    "api.sendgrid.com": {
+      "name": "SendGrid API",
+      "jurisdiction": "United States",
+      "category": "Email Service",
+      "risk_level": "High",
+      "data_access": "Email content, metadata"
+    },
+    "mailgun.com": {
+      "name": "Mailgun",
+      "jurisdiction": "United States",
+      "category": "Email Service",
+      "risk_level": "High",
+      "data_access": "Email content, metadata",
+      "alternatives_eu": ["Mailgun EU region", "Brevo (France)"]
+    },
+    "api.mailgun.net": {
+      "name": "Mailgun API",
+      "jurisdiction": "United States",
+      "category": "Email Service",
+      "risk_level": "High",
+      "data_access": "Email data"
+    },
+    "mailchimp.com": {
+      "name": "Mailchimp",
+      "jurisdiction": "United States",
+      "category": "Email Marketing",
+      "risk_level": "High",
+      "data_access": "Email lists, subscriber data, campaign metrics"
+    }
+  },
+  "monitoring": {
+    "sentry.io": {
+      "name": "Sentry",
+      "jurisdiction": "United States",
+      "category": "Error Tracking",
+      "risk_level": "High",
+      "data_access": "Error logs, stack traces, user context",
+      "alternatives_eu": ["Self-hosted Sentry", "Highlight.io (has EU region)"],
+      "notes": "Errors may contain PII"
+    },
+    "datadoghq.com": {
+      "name": "Datadog",
+      "jurisdiction": "United States",
+      "category": "Monitoring",
+      "risk_level": "High",
+      "data_access": "Logs, metrics, traces, user data",
+      "alternatives_eu": ["Grafana Cloud (EU region)"]
+    },
+    "newrelic.com": {
+      "name": "New Relic",
+      "jurisdiction": "United States",
+      "category": "Monitoring",
+      "risk_level": "High",
+      "data_access": "Application performance, user sessions"
+    },
+    "logrocket.com": {
+      "name": "LogRocket",
+      "jurisdiction": "United States",
+      "category": "Session Replay",
+      "risk_level": "High",
+      "data_access": "Full session recordings, user interactions"
+    },
+    "fullstory.com": {
+      "name": "FullStory",
+      "jurisdiction": "United States",
+      "category": "Session Replay",
+      "risk_level": "High",
+      "data_access": "Session recordings, user behavior"
+    }
+  },
+  "cdn": {
+    "cloudflare.com": {
+      "name": "Cloudflare",
+      "jurisdiction": "United States",
+      "category": "CDN",
+      "risk_level": "Medium",
+      "data_access": "IP addresses, traffic patterns",
+      "alternatives_eu": ["BunnyCDN (Slovenia)", "KeyCDN (Switzerland)"],
+      "notes": "Has EU POPs but US-based company"
+    },
+    "cdnjs.cloudflare.com": {
+      "name": "Cloudflare CDN (cdnjs)",
+      "jurisdiction": "United States",
+      "category": "CDN",
+      "risk_level": "Medium",
+      "data_access": "IP addresses"
+    },
+    "cdn.jsdelivr.net": {
+      "name": "jsDelivr",
+      "jurisdiction": "Poland (EU)",
+      "category": "CDN",
+      "risk_level": "Low",
+      "gdpr_compliant": true
+    },
+    "unpkg.com": {
+      "name": "unpkg",
+      "jurisdiction": "United States",
+      "category": "CDN",
+      "risk_level": "Medium",
+      "data_access": "IP addresses, package requests"
+    },
+    "fastly.com": {
+      "name": "Fastly",
+      "jurisdiction": "United States",
+      "category": "CDN",
+      "risk_level": "Medium",
+      "data_access": "Traffic data, IP addresses"
+    },
+    "bunnycdn.com": {
+      "name": "BunnyCDN",
+      "jurisdiction": "Slovenia (EU)",
+      "category": "CDN",
+      "risk_level": "Low",
+      "gdpr_compliant": true
+    }
+  },
+  "ai_services": {
+    "api.openai.com": {
+      "name": "OpenAI",
+      "jurisdiction": "United States",
+      "category": "AI/ML",
+      "risk_level": "Critical",
+      "data_access": "Input prompts, output data, potential PII in queries",
+      "alternatives_eu": ["Mistral AI (France)", "Aleph Alpha (Germany)"],
+      "notes": "Data retention policies unclear for API usage"
+    },
+    "openai.com": {
+      "name": "OpenAI",
+      "jurisdiction": "United States",
+      "category": "AI/ML",
+      "risk_level": "Critical",
+      "data_access": "User queries, conversation data"
+    },
+    "api.anthropic.com": {
+      "name": "Anthropic",
+      "jurisdiction": "United States",
+      "category": "AI/ML",
+      "risk_level": "Critical",
+      "data_access": "Conversation data, PII in prompts"
+    },
+    "anthropic.com": {
+      "name": "Anthropic Claude",
+      "jurisdiction": "United States",
+      "category": "AI/ML",
+      "risk_level": "Critical",
+      "data_access": "Input/output data"
+    }
+  },
+  "tag_management": {
+    "googletagmanager.com": {
+      "name": "Google Tag Manager",
+      "jurisdiction": "United States",
+      "category": "Tag Management",
+      "risk_level": "High",
+      "data_access": "All page data, user behavior",
+      "alternatives_eu": ["Matomo Tag Manager (self-hosted)"],
+      "notes": "Often loads other US trackers"
+    },
+    "connect.facebook.net": {
+      "name": "Facebook Pixel",
+      "jurisdiction": "United States",
+      "category": "Tag Management",
+      "risk_level": "High",
+      "data_access": "User behavior, conversions, PII"
+    }
+  },
+  "social_auth": {
+    "accounts.google.com": {
+      "name": "Google OAuth",
+      "jurisdiction": "United States",
+      "category": "Authentication",
+      "risk_level": "High",
+      "data_access": "Email, profile data, authentication events"
+    },
+    "facebook.com": {
+      "name": "Facebook Login",
+      "jurisdiction": "United States",
+      "category": "Authentication",
+      "risk_level": "High",
+      "data_access": "Profile data, email, friends list"
+    }
+  },
+  "communication": {
+    "twilio.com": {
+      "name": "Twilio",
+      "jurisdiction": "United States",
+      "category": "SMS/Communications",
+      "risk_level": "High",
+      "data_access": "Phone numbers, SMS content"
+    },
+    "vonage.com": {
+      "name": "Vonage",
+      "jurisdiction": "United States",
+      "category": "SMS/Communications",
+      "risk_level": "High",
+      "data_access": "Communication data"
+    }
+  },
+  "storage": {
+    "s3.amazonaws.com": {
+      "name": "AWS S3",
+      "jurisdiction": "United States",
+      "category": "Cloud Storage",
+      "risk_level": "Critical",
+      "data_access": "Stored files, objects, potential customer data"
+    },
+    "storage.googleapis.com": {
+      "name": "Google Cloud Storage",
+      "jurisdiction": "United States",
+      "category": "Cloud Storage",
+      "risk_level": "Critical",
+      "data_access": "Stored data"
+    },
+    "blob.core.windows.net": {
+      "name": "Azure Blob Storage",
+      "jurisdiction": "United States",
+      "category": "Cloud Storage",
+      "risk_level": "Critical",
+      "data_access": "Blob storage data"
+    }
+  },
+  "marketing": {
+    "hubspot.com": {
+      "name": "HubSpot",
+      "jurisdiction": "United States",
+      "category": "Marketing",
+      "risk_level": "High",
+      "data_access": "CRM data, contact information, marketing analytics"
+    },
+    "marketo.com": {
+      "name": "Marketo",
+      "jurisdiction": "United States",
+      "category": "Marketing",
+      "risk_level": "High",
+      "data_access": "Lead data, email campaigns"
+    }
+  },
+  "ab_testing": {
+    "optimizely.com": {
+      "name": "Optimizely",
+      "jurisdiction": "United States",
+      "category": "A/B Testing",
+      "risk_level": "Medium",
+      "data_access": "User behavior, experiment data"
+    },
+    "vwo.com": {
+      "name": "VWO",
+      "jurisdiction": "India",
+      "category": "A/B Testing",
+      "risk_level": "Medium",
+      "data_access": "Testing data, user behavior"
+    }
+  }
+}
