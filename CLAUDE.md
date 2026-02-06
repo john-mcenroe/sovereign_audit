@@ -48,4 +48,4 @@ cd frontend && npm install && npm run dev
 
 ## Testing
 
-Use `dummy` for UI work. For real API testing, see `TESTING_GUIDE.md` for example URLs (intercom.com, stripe.com, openai.com).
+Use `dummy` for UI work. For real API testing, see `docs/TESTING_GUIDE.md` for example URLs (intercom.com, stripe.com, openai.com).

@@ -6,22 +6,13 @@ A web application that analyzes SaaS sub-processor pages for data sovereignty ri
 
 ```
 sovereign_audit/
-├── backend/
-│   ├── main.py
-│   ├── requirements.txt
-│   └── .env.example
-└── frontend/
-    ├── src/
-    │   ├── components/
-    │   │   ├── Hero.jsx
-    │   │   ├── Loading.jsx
-    │   │   └── Dashboard.jsx
-    │   ├── App.jsx
-    │   ├── main.jsx
-    │   └── index.css
-    ├── package.json
-    ├── vite.config.js
-    └── tailwind.config.js
+├── backend/          # FastAPI app, Gemini analysis, known_services.json
+├── frontend/         # React + Vite + Tailwind UI
+├── docs/             # Guides: deployment, testing, logging, improvements, etc.
+├── scripts/          # Utility scripts (e.g. install_ffmpeg, diagnostics)
+├── assets/           # Images and video (screenshots, recordings)
+├── README.md
+└── CLAUDE.md         # Development guidelines for AI assistants
 ```
 
 ## Setup
@@ -129,7 +120,7 @@ Analyzes a URL for data sovereignty risks.
 
 ## Deployment
 
-See [DEPLOYMENT.md](./DEPLOYMENT.md) for detailed deployment instructions.
+See [DEPLOYMENT.md](./docs/DEPLOYMENT.md) for detailed deployment instructions.
 
 **Quick deploy**: Railway (Backend) + Vercel (Frontend)
 
@@ -137,4 +128,4 @@ See [DEPLOYMENT.md](./DEPLOYMENT.md) for detailed deployment instructions.
 2. Deploy frontend to Vercel, set `VITE_API_URL` to your Railway backend URL
 3. Update backend `FRONTEND_URLS` to include your Vercel domain
 
-Full instructions and alternative platforms available in [DEPLOYMENT.md](./DEPLOYMENT.md).
+Full instructions and alternative platforms available in [DEPLOYMENT.md](./docs/DEPLOYMENT.md).

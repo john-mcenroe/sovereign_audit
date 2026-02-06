@@ -329,11 +329,13 @@ python -c "import json; print(len(json.load(open('backend/known_services.json'))
 ### **Frontend:**
 - ✅ `frontend/src/components/Dashboard.jsx` - Added detected services section
 
-### **Documentation:**
+### **Documentation:** (in `docs/`)
 - ✅ `SOVEREIGNTY_IMPROVEMENTS.md` - Complete improvement guide
 - ✅ `QUICK_WINS.md` - Quick implementation guide
-- ✅ `IMPLEMENTATION_EXAMPLE.py` - Code examples
 - ✅ `IMPLEMENTATION_COMPLETE.md` - This file!
+
+### **Scripts:** (in `scripts/`)
+- ✅ `IMPLEMENTATION_EXAMPLE.py` - Code examples
 
 ---
 
