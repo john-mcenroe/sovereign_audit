@@ -10,6 +10,9 @@ from dotenv import load_dotenv
 import json
 import re
 import logging
+import sqlite3
+from contextlib import contextmanager
+from pathlib import Path
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 import asyncio
@@ -301,6 +304,140 @@ class AnalyzeResponse(BaseModel):
     positive_factors: list[str] = []
     detected_services: list[DetectedService] = []
 
+
+# =============================================================================
+# DATABASE MODULE - SQLite persistence for usage tracking and caching
+# =============================================================================
+
+DB_PATH = Path(os.getenv("DB_PATH", Path(__file__).parent / "sovereign_audit.db"))
+CACHE_MAX_AGE_HOURS = int(os.getenv("CACHE_MAX_AGE_HOURS", "1"))
+
+SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS analyses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    url TEXT NOT NULL,
+    normalized_url TEXT NOT NULL,
+    score INTEGER NOT NULL,
+    risk_level TEXT NOT NULL,
+    summary TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    duration_seconds REAL,
+    success BOOLEAN DEFAULT TRUE,
+    error_message TEXT,
+    response_json TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_analyses_normalized_url ON analyses(normalized_url);
+CREATE INDEX IF NOT EXISTS idx_analyses_created_at ON analyses(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS vendors (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    analysis_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    purpose TEXT,
+    location TEXT,
+    risk TEXT,
+    FOREIGN KEY (analysis_id) REFERENCES analyses(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_vendors_analysis_id ON vendors(analysis_id);
+CREATE INDEX IF NOT EXISTS idx_vendors_name ON vendors(name);
+"""
+
+
+def init_db():
+    """Initialize database with schema if not exists."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.executescript(SCHEMA_SQL)
+    conn.commit()
+    conn.close()
+    logger.info(f"Database initialized at {DB_PATH}")
+
+
+@contextmanager
+def get_db():
+    """Context manager for database connections."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def save_analysis(url: str, normalized_url: str, response: AnalyzeResponse,
+                  duration_seconds: float, success: bool = True,
+                  error_message: str = None) -> int:
+    """Save analysis to database. Returns analysis ID."""
+    try:
+        with get_db() as db:
+            cursor = db.execute("""
+                INSERT INTO analyses
+                (url, normalized_url, score, risk_level, summary,
+                 duration_seconds, success, error_message, response_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                url,
+                normalized_url,
+                response.score if success else 0,
+                response.risk_level if success else "Error",
+                response.summary if success else error_message,
+                duration_seconds,
+                success,
+                error_message,
+                response.model_dump_json() if success else "{}"
+            ))
+            analysis_id = cursor.lastrowid
+
+            # Insert vendors
+            if success and response.vendors:
+                for vendor in response.vendors:
+                    db.execute("""
+                        INSERT INTO vendors (analysis_id, name, purpose, location, risk)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (analysis_id, vendor.name, vendor.purpose,
+                          vendor.location, vendor.risk))
+
+            logger.info(f"Saved analysis #{analysis_id} for {normalized_url}")
+            return analysis_id
+    except Exception as e:
+        logger.warning(f"Failed to save analysis to DB (non-fatal): {e}")
+        return -1
+
+
+def get_cached_analysis(normalized_url: str) -> AnalyzeResponse | None:
+    """Get cached analysis if exists and fresh enough."""
+    try:
+        with get_db() as db:
+            row = db.execute("""
+                SELECT response_json FROM analyses
+                WHERE normalized_url = ?
+                  AND success = TRUE
+                  AND datetime(created_at) > datetime('now', ?)
+                ORDER BY created_at DESC
+                LIMIT 1
+            """, (normalized_url, f"-{CACHE_MAX_AGE_HOURS} hours")).fetchone()
+
+            if row:
+                logger.info(f"Cache hit for {normalized_url}")
+                return AnalyzeResponse.model_validate_json(row['response_json'])
+            return None
+    except Exception as e:
+        logger.warning(f"Cache lookup failed (non-fatal): {e}")
+        return None
+
+
+# Initialize DB on startup
+try:
+    init_db()
+except Exception as e:
+    logger.error(f"Database initialization failed: {e}")
 
 # =============================================================================
 # NEW: Enhanced Service Detection Functions
@@ -1960,11 +2097,19 @@ async def analyze_url(request: AnalyzeRequest):
         logger.error(f"❌ Failed to parse request: {parse_err}", exc_info=True)
         print(f"❌ Failed to parse request: {parse_err}", flush=True)
         raise HTTPException(status_code=400, detail=f"Invalid request: {str(parse_err)}")
-    
+
+    # --- CACHE CHECK: return cached result if fresh enough ---
+    if request.url.strip().lower() not in ("dummy", "https://dummy", "http://dummy"):
+        cached = get_cached_analysis(request.url)
+        if cached:
+            duration = (datetime.now() - start_time).total_seconds()
+            logger.info(f"📦 Returning cached result for {request.url} ({duration:.3f}s)")
+            return cached
+
     # --- DUMMY MODE: return mock data without any LLM/scraping calls ---
     if request.url.strip().lower() in ("dummy", "https://dummy", "http://dummy"):
         logger.info("🧪 DUMMY MODE: Returning mock response (no LLM calls)")
-        return AnalyzeResponse(
+        dummy_response = AnalyzeResponse(
             score=42,
             risk_level="High",
             summary=(
@@ -2190,6 +2335,9 @@ async def analyze_url(request: AnalyzeRequest):
                 ),
             ],
         )
+        duration = (datetime.now() - start_time).total_seconds()
+        save_analysis(url="dummy", normalized_url="dummy", response=dummy_response, duration_seconds=duration)
+        return dummy_response
     # --- END DUMMY MODE ---
 
     try:
@@ -2438,7 +2586,7 @@ async def analyze_url(request: AnalyzeRequest):
         logger.info(f"   Research: {len(company_research_qa)} questions answered, {len(sovereignty_flags)} flags")
         logger.info("=" * 80)
 
-        return AnalyzeResponse(
+        response_obj = AnalyzeResponse(
             score=score,
             risk_level=risk_level,
             summary=summary,
@@ -2453,7 +2601,17 @@ async def analyze_url(request: AnalyzeRequest):
             positive_factors=positive_factors[:10],
             detected_services=detected_services_formatted
         )
-    
+
+        # Save to database
+        save_analysis(
+            url=original_url,
+            normalized_url=request.url,
+            response=response_obj,
+            duration_seconds=duration,
+        )
+
+        return response_obj
+
     except HTTPException as http_err:
         end_time = datetime.now()
         duration = (end_time - start_time).total_seconds()
@@ -2475,6 +2633,18 @@ async def analyze_url(request: AnalyzeRequest):
         print("   Full traceback:", flush=True)
         traceback.print_exc()
         logger.info("=" * 80)
+        # Save failure to DB for tracking
+        try:
+            save_analysis(
+                url=original_url,
+                normalized_url=request.url,
+                response=AnalyzeResponse(score=0, risk_level="Error", summary=str(e), vendors=[]),
+                duration_seconds=duration,
+                success=False,
+                error_message=str(e),
+            )
+        except Exception:
+            pass
         raise HTTPException(status_code=500, detail=f"Internal server error: {type(e).__name__}: {str(e)}")
 
 
@@ -2507,3 +2677,81 @@ async def health():
     }
     logger.debug(f"🏥 Health status: {health_status}")
     return health_status
+
+
+@app.get("/stats")
+async def get_stats():
+    """Get usage statistics for the prototype."""
+    try:
+        with get_db() as db:
+            # Overall counts
+            total = db.execute("SELECT COUNT(*) as c FROM analyses").fetchone()['c']
+            unique_urls = db.execute("SELECT COUNT(DISTINCT normalized_url) as c FROM analyses WHERE success = TRUE").fetchone()['c']
+            failures = db.execute("SELECT COUNT(*) as c FROM analyses WHERE success = FALSE").fetchone()['c']
+
+            # Recent analyses
+            recent = db.execute("""
+                SELECT url, score, risk_level, duration_seconds, created_at
+                FROM analyses
+                WHERE success = TRUE
+                ORDER BY created_at DESC
+                LIMIT 20
+            """).fetchall()
+
+            # Top vendors seen across all analyses
+            top_vendors = db.execute("""
+                SELECT name, location, risk, COUNT(*) as appearances
+                FROM vendors
+                GROUP BY name
+                ORDER BY appearances DESC
+                LIMIT 15
+            """).fetchall()
+
+            # Risk distribution
+            risk_dist = db.execute("""
+                SELECT risk_level, COUNT(*) as count
+                FROM analyses
+                WHERE success = TRUE
+                GROUP BY risk_level
+            """).fetchall()
+
+            # Score stats
+            score_stats = db.execute("""
+                SELECT AVG(score) as avg_score, MIN(score) as min_score, MAX(score) as max_score
+                FROM analyses
+                WHERE success = TRUE
+            """).fetchone()
+
+            return {
+                "total_analyses": total,
+                "unique_urls": unique_urls,
+                "failed_analyses": failures,
+                "score_stats": {
+                    "average": round(score_stats['avg_score'], 1) if score_stats['avg_score'] else 0,
+                    "min": score_stats['min_score'] or 0,
+                    "max": score_stats['max_score'] or 0,
+                },
+                "risk_distribution": {r['risk_level']: r['count'] for r in risk_dist},
+                "recent_analyses": [
+                    {
+                        "url": r['url'],
+                        "score": r['score'],
+                        "risk_level": r['risk_level'],
+                        "duration_seconds": round(r['duration_seconds'], 2) if r['duration_seconds'] else None,
+                        "analyzed_at": r['created_at'],
+                    }
+                    for r in recent
+                ],
+                "top_vendors": [
+                    {
+                        "name": v['name'],
+                        "location": v['location'],
+                        "risk": v['risk'],
+                        "appearances": v['appearances'],
+                    }
+                    for v in top_vendors
+                ],
+            }
+    except Exception as e:
+        logger.error(f"Stats query failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Stats unavailable: {str(e)}")

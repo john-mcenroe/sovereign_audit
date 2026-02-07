@@ -34,6 +34,9 @@ frontend/.vite/
 *.swo
 *~
 
+# Database
+*.db
+
 # OS
 .DS_Store
 Thumbs.db
