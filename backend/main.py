@@ -2502,10 +2502,10 @@ async def analyze_url(request: AnalyzeRequest):
         logger.info(f"✅ Scraping successful: {len(pages_scraped)} pages scraped, {len(combined_text)} total characters")
         logger.info(f"📄 Pages found: {', '.join(pages_scraped.keys())}")
         
-        if not combined_text or len(combined_text.strip()) < 50:
-            logger.error(f"❌ Insufficient text extracted: {len(combined_text.strip())} characters")
-            raise HTTPException(status_code=400, detail="Could not extract sufficient text from the website (need at least 50 characters)")
-        
+        if not combined_text or len(combined_text.strip()) < 10:
+            combined_text = f"Website at {url} — minimal content could be extracted. Domain: {url}"
+            logger.warning(f"⚠️ Very little text extracted, proceeding with limited info")
+
         # Analyze with Gemini (run in thread pool to avoid blocking)
         logger.info("📥 Step 2/5: Analyzing scraped content with Gemini AI...")
         logger.debug(f"🔄 About to run analyze_with_gemini in thread pool")
@@ -2896,3 +2896,42 @@ async def get_stats():
     except Exception as e:
         logger.error(f"Stats query failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Stats unavailable: {str(e)}")
+
+
+@app.get("/data")
+async def get_all_data():
+    """Export all analysis records with full response data."""
+    try:
+        with get_db() as db:
+            analyses = db.execute("""
+                SELECT id, url, normalized_url, score, risk_level, summary,
+                       duration_seconds, created_at, success, error_message, response_json
+                FROM analyses
+                ORDER BY created_at DESC
+            """).fetchall()
+
+            results = []
+            for a in analyses:
+                try:
+                    full_response = json.loads(a['response_json'])
+                except Exception:
+                    full_response = None
+
+                results.append({
+                    "id": a['id'],
+                    "url": a['url'],
+                    "normalized_url": a['normalized_url'],
+                    "score": a['score'],
+                    "risk_level": a['risk_level'],
+                    "summary": a['summary'],
+                    "duration_seconds": a['duration_seconds'],
+                    "created_at": str(a['created_at']) if a['created_at'] else None,
+                    "success": a['success'],
+                    "error_message": a['error_message'],
+                    "full_response": full_response,
+                })
+
+            return {"total_records": len(results), "analyses": results}
+    except Exception as e:
+        logger.error(f"Data export failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Data export failed: {str(e)}")
