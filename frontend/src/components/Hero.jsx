@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { AlertCircle, X } from 'lucide-react'
+import { API_URL } from '../config'
 
 /**
  * Normalizes a URL by adding protocol if missing and handling common patterns
@@ -110,7 +111,10 @@ function Hero({ onAnalyze, error }) {
                   <div className="text-sm leading-relaxed">{error}</div>
                   {error.includes('backend') && (
                     <div className="mt-3 text-xs text-red-700 bg-red-100 p-2 rounded">
-                      <strong>Tip:</strong> Make sure the backend server is running. Check the terminal where you started the backend.
+                      <strong>Tip:</strong>{' '}
+                      {API_URL.includes('localhost')
+                        ? 'Make sure the backend server is running. Check the terminal where you started the backend.'
+                        : 'If the backend is on Render free tier, wait 30–60s and try again (cold start). Ensure VITE_API_URL has no trailing slash and FRONTEND_URLS on Render includes this site\'s URL, then redeploy both.'}
                     </div>
                   )}
                 </div>

@@ -99,7 +99,8 @@ logger.info(f"📦 Thread pool executor created with {executor._max_workers} wor
 
 # CORS middleware to allow frontend to connect
 # Allow origins from environment variable or default to localhost
-FRONTEND_URLS = os.getenv("FRONTEND_URLS", "http://localhost:5173,http://localhost:3000").split(",")
+# On Render, set FRONTEND_URLS to your Vercel URL, e.g. https://your-app.vercel.app
+FRONTEND_URLS = [o.strip() for o in os.getenv("FRONTEND_URLS", "http://localhost:5173,http://localhost:3000").split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=FRONTEND_URLS,

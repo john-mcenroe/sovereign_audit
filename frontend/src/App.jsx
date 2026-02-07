@@ -52,10 +52,12 @@ function App() {
         controller.abort()
       }, 60000) // 60 second timeout
       
+      const baseUrl = API_URL.replace(/\/+$/, '')
+      const analyzeUrl = `${baseUrl}/analyze`
       const fetchStartTime = Date.now()
-      console.log(`📡 Sending POST request to ${API_URL}/analyze...`)
+      console.log(`📡 Sending POST request to ${analyzeUrl}...`)
       
-      const response = await fetch(`${API_URL}/analyze`, {
+      const response = await fetch(analyzeUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -128,7 +130,10 @@ function App() {
       if (err.name === 'AbortError' || err.message.includes('aborted')) {
         errorMessage = 'Request timed out after 60 seconds. The page may be too large or the server is taking too long. Please try a different URL or check the backend logs.'
       } else if (err.message.includes('Failed to fetch') || err.message.includes('NetworkError')) {
-        errorMessage = `Cannot connect to backend API at ${API_URL}. Make sure the backend server is running on port 8000.`
+        const isProduction = API_URL && !API_URL.includes('localhost')
+        errorMessage = isProduction
+          ? `Cannot reach the backend at ${API_URL}. Check that the service is running on Render (dashboard → Logs), that the deploy succeeded, and that FRONTEND_URLS includes this site. First request on free tier can take 30–60s (cold start).`
+          : `Cannot connect to backend API at ${API_URL}. Make sure the backend server is running (e.g. uvicorn on port 8000).`
       } else if (err.message.includes('timeout')) {
         errorMessage = 'Request timed out. The page may be too large or the server is slow. Please try again.'
       } else if (err.message.includes('404')) {
