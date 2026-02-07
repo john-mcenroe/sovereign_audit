@@ -306,131 +306,272 @@ class AnalyzeResponse(BaseModel):
 
 
 # =============================================================================
-# DATABASE MODULE - SQLite persistence for usage tracking and caching
+# DATABASE MODULE - SQLite (local) + PostgreSQL (Render) support
 # =============================================================================
 
-DB_PATH = Path(os.getenv("DB_PATH", Path(__file__).parent / "sovereign_audit.db"))
+DATABASE_URL = os.getenv("DATABASE_URL")  # Render sets this automatically
 CACHE_MAX_AGE_HOURS = int(os.getenv("CACHE_MAX_AGE_HOURS", "1"))
 
-SCHEMA_SQL = """
-CREATE TABLE IF NOT EXISTS analyses (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    url TEXT NOT NULL,
-    normalized_url TEXT NOT NULL,
-    score INTEGER NOT NULL,
-    risk_level TEXT NOT NULL,
-    summary TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    duration_seconds REAL,
-    success BOOLEAN DEFAULT TRUE,
-    error_message TEXT,
-    response_json TEXT NOT NULL
-);
+# Detect which database backend to use
+USE_POSTGRES = bool(DATABASE_URL)
 
-CREATE INDEX IF NOT EXISTS idx_analyses_normalized_url ON analyses(normalized_url);
-CREATE INDEX IF NOT EXISTS idx_analyses_created_at ON analyses(created_at DESC);
+if USE_POSTGRES:
+    # PostgreSQL mode (Render production)
+    import psycopg2
+    import psycopg2.extras
 
-CREATE TABLE IF NOT EXISTS vendors (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    analysis_id INTEGER NOT NULL,
-    name TEXT NOT NULL,
-    purpose TEXT,
-    location TEXT,
-    risk TEXT,
-    FOREIGN KEY (analysis_id) REFERENCES analyses(id) ON DELETE CASCADE
-);
+    SCHEMA_SQL = """
+    CREATE TABLE IF NOT EXISTS analyses (
+        id SERIAL PRIMARY KEY,
+        url TEXT NOT NULL,
+        normalized_url TEXT NOT NULL,
+        score INTEGER NOT NULL,
+        risk_level TEXT NOT NULL,
+        summary TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        duration_seconds REAL,
+        success BOOLEAN DEFAULT TRUE,
+        error_message TEXT,
+        response_json TEXT NOT NULL
+    );
 
-CREATE INDEX IF NOT EXISTS idx_vendors_analysis_id ON vendors(analysis_id);
-CREATE INDEX IF NOT EXISTS idx_vendors_name ON vendors(name);
-"""
+    CREATE INDEX IF NOT EXISTS idx_analyses_normalized_url ON analyses(normalized_url);
+    CREATE INDEX IF NOT EXISTS idx_analyses_created_at ON analyses(created_at DESC);
 
+    CREATE TABLE IF NOT EXISTS vendors (
+        id SERIAL PRIMARY KEY,
+        analysis_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        purpose TEXT,
+        location TEXT,
+        risk TEXT,
+        FOREIGN KEY (analysis_id) REFERENCES analyses(id) ON DELETE CASCADE
+    );
 
-def init_db():
-    """Initialize database with schema if not exists."""
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.executescript(SCHEMA_SQL)
-    conn.commit()
-    conn.close()
-    logger.info(f"Database initialized at {DB_PATH}")
+    CREATE INDEX IF NOT EXISTS idx_vendors_analysis_id ON vendors(analysis_id);
+    CREATE INDEX IF NOT EXISTS idx_vendors_name ON vendors(name);
+    """
 
+    def get_db_connection():
+        """Get PostgreSQL connection."""
+        conn = psycopg2.connect(DATABASE_URL)
+        return conn
 
-@contextmanager
-def get_db():
-    """Context manager for database connections."""
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    try:
-        yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+    def init_db():
+        """Initialize PostgreSQL database."""
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            # Split schema into individual statements
+            for statement in SCHEMA_SQL.split(';'):
+                statement = statement.strip()
+                if statement:
+                    cursor.execute(statement)
+            conn.commit()
+            cursor.close()
+            conn.close()
+            logger.info("PostgreSQL database initialized")
+        except psycopg2.Error as e:
+            logger.warning(f"PostgreSQL init warning (may already exist): {e}")
 
+    @contextmanager
+    def get_db():
+        """Context manager for PostgreSQL connections."""
+        conn = get_db_connection()
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
-def save_analysis(url: str, normalized_url: str, response: AnalyzeResponse,
-                  duration_seconds: float, success: bool = True,
-                  error_message: str = None) -> int:
-    """Save analysis to database. Returns analysis ID."""
-    try:
-        with get_db() as db:
-            cursor = db.execute("""
-                INSERT INTO analyses
-                (url, normalized_url, score, risk_level, summary,
-                 duration_seconds, success, error_message, response_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                url,
-                normalized_url,
-                response.score if success else 0,
-                response.risk_level if success else "Error",
-                response.summary if success else error_message,
-                duration_seconds,
-                success,
-                error_message,
-                response.model_dump_json() if success else "{}"
-            ))
-            analysis_id = cursor.lastrowid
+    def save_analysis(url: str, normalized_url: str, response: AnalyzeResponse,
+                      duration_seconds: float, success: bool = True,
+                      error_message: str = None) -> int:
+        """Save analysis to PostgreSQL database. Returns analysis ID."""
+        try:
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO analyses
+                    (url, normalized_url, score, risk_level, summary,
+                     duration_seconds, success, error_message, response_json)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                """, (
+                    url,
+                    normalized_url,
+                    response.score if success else 0,
+                    response.risk_level if success else "Error",
+                    response.summary if success else error_message,
+                    duration_seconds,
+                    success,
+                    error_message,
+                    response.model_dump_json() if success else "{}"
+                ))
+                analysis_id = cursor.fetchone()[0]
 
-            # Insert vendors
-            if success and response.vendors:
-                for vendor in response.vendors:
-                    db.execute("""
-                        INSERT INTO vendors (analysis_id, name, purpose, location, risk)
-                        VALUES (?, ?, ?, ?, ?)
-                    """, (analysis_id, vendor.name, vendor.purpose,
-                          vendor.location, vendor.risk))
+                # Insert vendors
+                if success and response.vendors:
+                    for vendor in response.vendors:
+                        cursor.execute("""
+                            INSERT INTO vendors (analysis_id, name, purpose, location, risk)
+                            VALUES (%s, %s, %s, %s, %s)
+                        """, (analysis_id, vendor.name, vendor.purpose,
+                              vendor.location, vendor.risk))
 
-            logger.info(f"Saved analysis #{analysis_id} for {normalized_url}")
-            return analysis_id
-    except Exception as e:
-        logger.warning(f"Failed to save analysis to DB (non-fatal): {e}")
-        return -1
+                cursor.close()
+                logger.info(f"Saved analysis #{analysis_id} for {normalized_url}")
+                return analysis_id
+        except Exception as e:
+            logger.warning(f"Failed to save analysis to DB (non-fatal): {e}")
+            return -1
 
+    def get_cached_analysis(normalized_url: str) -> AnalyzeResponse | None:
+        """Get cached analysis if exists and fresh enough."""
+        try:
+            with get_db() as conn:
+                cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+                cursor.execute("""
+                    SELECT response_json FROM analyses
+                    WHERE normalized_url = %s
+                      AND success = TRUE
+                      AND created_at > NOW() - INTERVAL '%s hours'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """, (normalized_url, CACHE_MAX_AGE_HOURS))
+                row = cursor.fetchone()
+                cursor.close()
 
-def get_cached_analysis(normalized_url: str) -> AnalyzeResponse | None:
-    """Get cached analysis if exists and fresh enough."""
-    try:
-        with get_db() as db:
-            row = db.execute("""
-                SELECT response_json FROM analyses
-                WHERE normalized_url = ?
-                  AND success = TRUE
-                  AND datetime(created_at) > datetime('now', ?)
-                ORDER BY created_at DESC
-                LIMIT 1
-            """, (normalized_url, f"-{CACHE_MAX_AGE_HOURS} hours")).fetchone()
-
-            if row:
-                logger.info(f"Cache hit for {normalized_url}")
-                return AnalyzeResponse.model_validate_json(row['response_json'])
+                if row:
+                    logger.info(f"Cache hit for {normalized_url}")
+                    return AnalyzeResponse.model_validate_json(row['response_json'])
+                return None
+        except Exception as e:
+            logger.warning(f"Cache lookup failed (non-fatal): {e}")
             return None
-    except Exception as e:
-        logger.warning(f"Cache lookup failed (non-fatal): {e}")
-        return None
+
+else:
+    # SQLite mode (local development)
+    DB_PATH = Path(os.getenv("DB_PATH", Path(__file__).parent / "sovereign_audit.db"))
+
+    SCHEMA_SQL = """
+    CREATE TABLE IF NOT EXISTS analyses (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        url TEXT NOT NULL,
+        normalized_url TEXT NOT NULL,
+        score INTEGER NOT NULL,
+        risk_level TEXT NOT NULL,
+        summary TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        duration_seconds REAL,
+        success BOOLEAN DEFAULT TRUE,
+        error_message TEXT,
+        response_json TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_analyses_normalized_url ON analyses(normalized_url);
+    CREATE INDEX IF NOT EXISTS idx_analyses_created_at ON analyses(created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS vendors (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        analysis_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        purpose TEXT,
+        location TEXT,
+        risk TEXT,
+        FOREIGN KEY (analysis_id) REFERENCES analyses(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_vendors_analysis_id ON vendors(analysis_id);
+    CREATE INDEX IF NOT EXISTS idx_vendors_name ON vendors(name);
+    """
+
+    def init_db():
+        """Initialize SQLite database."""
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.executescript(SCHEMA_SQL)
+        conn.commit()
+        conn.close()
+        logger.info(f"SQLite database initialized at {DB_PATH}")
+
+    @contextmanager
+    def get_db():
+        """Context manager for SQLite connections."""
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def save_analysis(url: str, normalized_url: str, response: AnalyzeResponse,
+                      duration_seconds: float, success: bool = True,
+                      error_message: str = None) -> int:
+        """Save analysis to SQLite database. Returns analysis ID."""
+        try:
+            with get_db() as db:
+                cursor = db.execute("""
+                    INSERT INTO analyses
+                    (url, normalized_url, score, risk_level, summary,
+                     duration_seconds, success, error_message, response_json)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    url,
+                    normalized_url,
+                    response.score if success else 0,
+                    response.risk_level if success else "Error",
+                    response.summary if success else error_message,
+                    duration_seconds,
+                    success,
+                    error_message,
+                    response.model_dump_json() if success else "{}"
+                ))
+                analysis_id = cursor.lastrowid
+
+                # Insert vendors
+                if success and response.vendors:
+                    for vendor in response.vendors:
+                        db.execute("""
+                            INSERT INTO vendors (analysis_id, name, purpose, location, risk)
+                            VALUES (?, ?, ?, ?, ?)
+                        """, (analysis_id, vendor.name, vendor.purpose,
+                              vendor.location, vendor.risk))
+
+                logger.info(f"Saved analysis #{analysis_id} for {normalized_url}")
+                return analysis_id
+        except Exception as e:
+            logger.warning(f"Failed to save analysis to DB (non-fatal): {e}")
+            return -1
+
+    def get_cached_analysis(normalized_url: str) -> AnalyzeResponse | None:
+        """Get cached analysis if exists and fresh enough."""
+        try:
+            with get_db() as db:
+                row = db.execute("""
+                    SELECT response_json FROM analyses
+                    WHERE normalized_url = ?
+                      AND success = TRUE
+                      AND datetime(created_at) > datetime('now', ?)
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """, (normalized_url, f"-{CACHE_MAX_AGE_HOURS} hours")).fetchone()
+
+                if row:
+                    logger.info(f"Cache hit for {normalized_url}")
+                    return AnalyzeResponse.model_validate_json(row['response_json'])
+                return None
+        except Exception as e:
+            logger.warning(f"Cache lookup failed (non-fatal): {e}")
+            return None
 
 
 # Initialize DB on startup
