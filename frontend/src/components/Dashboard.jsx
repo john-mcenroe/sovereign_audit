@@ -249,7 +249,7 @@ function Dashboard({ result, onReset, analyzedUrl }) {
     statusColor: result.risk_level === 'High' ? 'text-red-600' : result.risk_level === 'Medium' ? 'text-yellow-600' : 'text-green-600',
   })
 
-  if (result.risk_factors?.length > 0) {
+  if (result.risk_factors?.length > 6) {
     indexItems.push({
       id: 'risk-factors', label: 'Risk Factors', icon: AlertTriangle,
       iconColor: 'text-red-500', status: `${result.risk_factors.length}`, detail: 'identified',
@@ -316,8 +316,8 @@ function Dashboard({ result, onReset, analyzedUrl }) {
   }
 
   // Score helpers
-  const scoreColor = result.score < 60 ? 'text-red-600' : result.score < 80 ? 'text-yellow-600' : 'text-green-600'
-  const scoreBg = result.score < 60 ? 'border-red-500 bg-red-50' : result.score < 80 ? 'border-yellow-500 bg-yellow-50' : 'border-green-500 bg-green-50'
+  const scoreColor = result.score < 50 ? 'text-red-600' : result.score < 75 ? 'text-yellow-600' : 'text-green-600'
+  const scoreBg = result.score < 50 ? 'border-red-500 bg-red-50' : result.score < 75 ? 'border-yellow-500 bg-yellow-50' : 'border-green-500 bg-green-50'
 
   const riskBadge = () => {
     if (result.risk_level === 'High') return (
@@ -373,12 +373,58 @@ function Dashboard({ result, onReset, analyzedUrl }) {
 
         {/* Executive Summary */}
         <Section id="executive-summary" icon={FileText} title="Executive Summary">
-          <p className="text-gray-700 leading-relaxed">{result.summary}</p>
+          <p className="text-gray-700 leading-relaxed mb-5">{result.summary}</p>
+
+          {/* Positive & Negative Factors Side-by-Side */}
+          {(result.positive_factors?.length > 0 || result.risk_factors?.length > 0) && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Positive Signals */}
+              {result.positive_factors?.length > 0 && (
+                <div className="border border-green-200 bg-green-50/50 p-4">
+                  <h3 className="text-sm font-bold text-green-800 flex items-center gap-1.5 mb-3">
+                    <CheckCircle2 className="w-4 h-4" />
+                    Positive Signals ({result.positive_factors.length})
+                  </h3>
+                  <ul className="space-y-1.5">
+                    {result.positive_factors.map((factor, i) => (
+                      <li key={i} className="flex items-start gap-2 text-sm text-green-900">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-green-600 mt-0.5 flex-shrink-0" />
+                        {factor}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Key Concerns */}
+              {result.risk_factors?.length > 0 && (
+                <div className="border border-red-200 bg-red-50/50 p-4">
+                  <h3 className="text-sm font-bold text-red-800 flex items-center gap-1.5 mb-3">
+                    <AlertTriangle className="w-4 h-4" />
+                    Key Concerns ({result.risk_factors.length})
+                  </h3>
+                  <ul className="space-y-1.5">
+                    {result.risk_factors.slice(0, 6).map((factor, i) => (
+                      <li key={i} className="flex items-start gap-2 text-sm text-red-900">
+                        <AlertTriangle className="w-3.5 h-3.5 text-red-500 mt-0.5 flex-shrink-0" />
+                        {factor}
+                      </li>
+                    ))}
+                    {result.risk_factors.length > 6 && (
+                      <li className="text-xs text-red-600 font-medium pt-1">
+                        + {result.risk_factors.length - 6} more concern{result.risk_factors.length - 6 > 1 ? 's' : ''} below
+                      </li>
+                    )}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
         </Section>
 
-        {/* Risk Factors */}
-        {result.risk_factors?.length > 0 && (
-          <Section id="risk-factors" icon={AlertTriangle} title={`Risk Factors (${result.risk_factors.length})`} accent="red">
+        {/* Full Risk Factors (expanded list if more than 6) */}
+        {result.risk_factors?.length > 6 && (
+          <Section id="risk-factors" icon={AlertTriangle} title={`All Risk Factors (${result.risk_factors.length})`} accent="red">
             <ul className="space-y-2">
               {result.risk_factors.map((factor, i) => (
                 <li key={i} className="flex items-start gap-2 text-sm text-gray-800">

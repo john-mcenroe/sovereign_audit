@@ -71,13 +71,13 @@ function Hero({ onAnalyze, error }) {
         aria-hidden="true"
       />
       <div className="absolute inset-0 bg-white/75" aria-hidden="true" />
-      <div className="relative z-10 w-full max-w-2xl">
+      <div className="relative z-10 w-full max-w-2xl lg:max-w-3xl">
         <div className="text-center mb-12">
           <h1 className="text-5xl md:text-6xl font-black text-black mb-4 tracking-tight [text-shadow:0_2px_4px_rgba(255,255,255,0.9)]">
-            Test a website for sovereignty in the EU
+            Test any website for sovereignty in the EU
           </h1>
-          <p className="text-lg md:text-xl font-extrabold text-gray-900 max-w-xl mx-auto [text-shadow:0_1px_2px_rgba(255,255,255,0.9)]">
-            Enter any website and we analyze infrastructure, data flows, and compliance so you know if it meets EU data sovereignty.
+          <p className="text-lg md:text-xl font-extrabold text-gray-900 max-w-xl lg:max-w-2xl mx-auto [text-shadow:0_1px_2px_rgba(255,255,255,0.9)]">
+            Enter any website and we analyze infrastructure, data flows, and compliance to let you know how well it meets EU data sovereignty requirements.
           </p>
         </div>
 

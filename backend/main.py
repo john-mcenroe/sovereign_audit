@@ -297,6 +297,7 @@ class AnalyzeResponse(BaseModel):
     additional_findings: AdditionalFindings = AdditionalFindings()
     company_research: CompanyResearch = CompanyResearch()
     risk_factors: list[str] = []
+    positive_factors: list[str] = []
     detected_services: list[DetectedService] = []
 
 
@@ -1138,7 +1139,7 @@ Return ONLY valid JSON matching this EXACT schema:
     "recent_incidents": ["..."]
   },
   "additional_categories": ["category1", "category2"],
-  "summary": "Comprehensive executive summary of sovereignty risk covering company jurisdiction, infrastructure, data flows, compliance, and sub-processors"
+  "summary": "3-5 sentence narrative executive summary. Start with who the company is and where they are registered/headquartered. Then describe their infrastructure choices and key third-party dependencies. Highlight both positive sovereignty signals (EU registration, EU hosting, EU vendors) and concerns (US dependencies, data flows outside EU). End with an overall sovereignty assessment. Be specific - name the country, the providers, the risks."
 }"""
 
     try:
@@ -1228,331 +1229,417 @@ Return ONLY valid JSON matching this EXACT schema:
         raise HTTPException(status_code=500, detail=f"Error analyzing with Gemini: {str(e)}")
 
 
-def calculate_score(vendors: list[dict], company_info: dict = None, infrastructure: dict = None, data_flows: dict = None, compliance: dict = None) -> tuple[int, str, list[str]]:
-    """Calculate strict sovereignty score based on vendors, company info, infrastructure, data flows, and compliance."""
-    logger.info(f"🧮 Calculating strict sovereignty score for {len(vendors)} vendors")
+def calculate_score(vendors: list[dict], company_info: dict = None, infrastructure: dict = None, data_flows: dict = None, compliance: dict = None) -> tuple[int, str, list[str], list[str]]:
+    """Calculate sovereignty score based on vendors, company info, infrastructure, data flows, and compliance.
+
+    Returns: (score, risk_level, risk_factors, positive_factors)
+    """
+    logger.info(f"🧮 Calculating sovereignty score for {len(vendors)} vendors")
     score = 100
     deductions = []
     risk_factors = []
-    
-    # Track if we have complete information (penalize unknowns)
+    positive_factors = []
+
+    # Track if we have complete information (penalize unknowns lightly)
     has_complete_info = True
-    
+
+    # EU country list for matching
+    EU_COUNTRIES = ["GERMANY", "FRANCE", "IRELAND", "NETHERLANDS", "ITALY", "SPAIN",
+                    "BELGIUM", "AUSTRIA", "SWEDEN", "DENMARK", "FINLAND", "POLAND",
+                    "PORTUGAL", "CZECH", "ROMANIA", "BULGARIA", "CROATIA", "SLOVENIA",
+                    "SLOVAKIA", "ESTONIA", "LATVIA", "LITHUANIA", "LUXEMBOURG", "MALTA",
+                    "CYPRUS", "GREECE", "HUNGARY"]
+
+    def _is_eu(text: str) -> bool:
+        t = text.upper()
+        return "EU" in t or "EEA" in t or any(c in t for c in EU_COUNTRIES)
+
+    def _is_us(text: str) -> bool:
+        t = text.upper().strip()
+        if "USA" in t or "UNITED STATES" in t:
+            return True
+        # Match "US" as standalone word (e.g., "US (Virginia)") but not inside words
+        return bool(re.search(r'\bUS\b', t))
+
     # 1. Company Registration & Jurisdiction
     if company_info:
         reg_country = str(company_info.get("registration_country", "") or "").upper()
         if not reg_country or reg_country == "UNKNOWN":
-            score -= 10
-            deductions.append("-10: Company registration country unknown")
+            score -= 5
+            deductions.append("-5: Company registration country unknown")
             risk_factors.append("Company registration country not disclosed")
             has_complete_info = False
-        elif "USA" in reg_country or "UNITED STATES" in reg_country or "US" in reg_country:
-            score -= 25  # Increased from -15
+        elif _is_us(reg_country):
+            score -= 25
             deductions.append("-25: Company registered in US (high sovereignty risk)")
             risk_factors.append("Company is US-registered entity - subject to US jurisdiction")
-        elif "EU" in reg_country or "EEA" in reg_country or any(eu in reg_country for eu in ["GERMANY", "FRANCE", "IRELAND", "NETHERLANDS", "ITALY", "SPAIN", "BELGIUM", "AUSTRIA", "SWEDEN", "DENMARK", "FINLAND", "POLAND", "PORTUGAL"]):
-            score += 5  # Bonus for EU registration
-            logger.info("+5: Company registered in EU")
+        elif _is_eu(reg_country):
+            score += 8  # Meaningful bonus for EU registration
+            positive_factors.append(f"Company registered in EU ({reg_country.title()})")
+            logger.info("+8: Company registered in EU")
         else:
             # Other non-EU countries
             score -= 5
             deductions.append("-5: Company registered outside EU")
             risk_factors.append(f"Company registered in {reg_country} (non-EU)")
     else:
-        score -= 10
-        deductions.append("-10: No company registration information available")
+        score -= 5
+        deductions.append("-5: No company registration information available")
         has_complete_info = False
     
     # 2. Infrastructure & Cloud
+    EU_CLOUD_PROVIDERS = ["HETZNER", "OVH", "SCALEWAY", "IONOS", "LEASEWEB",
+                          "EXOSCALE", "UPCLOUD", "FUGA", "CITY CLOUD", "OPEN TELEKOM"]
+    EU_HOSTING_PLATFORMS = ["HETZNER", "OVH", "SCALEWAY", "IONOS"]
+
     if infrastructure:
         cloud_provider = str(infrastructure.get("cloud_provider", "") or "").upper()
         hosting_platform = str(infrastructure.get("hosting_platform", "") or "").upper()
         data_centers = infrastructure.get("data_centers", [])
         server_locations = infrastructure.get("server_locations", [])
         cdn_providers = infrastructure.get("cdn_providers", [])
-        
-        # Penalize unknown infrastructure
+
+        # Penalize unknown infrastructure (light penalty)
         if cloud_provider == "UNKNOWN" or not cloud_provider:
-            score -= 8
-            deductions.append("-8: Cloud provider unknown")
+            score -= 3
+            deductions.append("-3: Cloud provider unknown")
             risk_factors.append("Cloud provider not disclosed")
             has_complete_info = False
-        
-        # Check hosting platform (Fly.io, etc.) - ALWAYS penalize US hosting platforms
+
+        # Check for EU cloud providers (bonus)
+        if any(eu_cp in cloud_provider for eu_cp in EU_CLOUD_PROVIDERS):
+            score += 8
+            positive_factors.append(f"EU-based cloud provider: {cloud_provider.title()}")
+            logger.info(f"+8: EU cloud provider: {cloud_provider}")
+
+        # Check hosting platform (Fly.io, etc.)
         if hosting_platform and hosting_platform != "UNKNOWN":
-            # Fly.io is a US company - always penalize, even with EU regions
-            if "FLY.IO" in hosting_platform.upper() or "FLYIO" in hosting_platform.upper():
-                all_locations = " ".join(data_centers + server_locations).upper()
-                if "EU" in all_locations or "EUROPE" in all_locations or "IRELAND" in all_locations:
-                    # Still penalize because Fly.io is US company (subject to US jurisdiction)
-                    score -= 12  # Increased from -3 - US company is always a risk
-                    deductions.append("-12: Using Fly.io (US company) even with EU server regions")
-                    risk_factors.append(f"Hosting platform: {hosting_platform} (US company, EU regions) - subject to US jurisdiction")
+            # EU hosting platforms get a bonus
+            if any(eu_hp in hosting_platform for eu_hp in EU_HOSTING_PLATFORMS):
+                score += 5
+                positive_factors.append(f"EU-based hosting platform: {hosting_platform.title()}")
+                logger.info(f"+5: EU hosting platform: {hosting_platform}")
+
+            # Fly.io is a US company - penalize, but less if EU regions
+            if "FLY.IO" in hosting_platform or "FLYIO" in hosting_platform:
+                all_locations = " ".join(str(l) for l in data_centers + server_locations if l).upper()
+                if _is_eu(all_locations):
+                    score -= 6
+                    deductions.append("-6: Using Fly.io (US company) with EU server regions")
+                    risk_factors.append(f"Hosting platform: {hosting_platform} (US company) - subject to US jurisdiction, but using EU regions")
                 else:
-                    score -= 20  # Increased from -15
-                    deductions.append("-20: Using Fly.io (US company) without EU region specified")
+                    score -= 15
+                    deductions.append("-15: Using Fly.io (US company) without EU region specified")
                     risk_factors.append(f"Hosting platform: {hosting_platform} (US company), EU region not specified")
-            
+
             # Check for other US hosting platforms
-            hosting_upper = hosting_platform.upper()
-            if any(us_host in hosting_upper for us_host in ["HEROKU", "VERCEL", "NETLIFY", "RAILWAY"]):
-                score -= 10
-                deductions.append(f"-10: Using US hosting platform: {hosting_platform}")
+            if any(us_host in hosting_platform for us_host in ["HEROKU", "VERCEL", "NETLIFY", "RAILWAY"]):
+                score -= 8
+                deductions.append(f"-8: Using US hosting platform: {hosting_platform}")
                 risk_factors.append(f"US hosting platform: {hosting_platform}")
-        
-        # Check for US cloud providers (stricter penalties)
+
+        # Check for US cloud providers
         if any(us_provider in cloud_provider for us_provider in ["AWS", "AMAZON", "GOOGLE CLOUD", "GCP", "AZURE", "MICROSOFT"]):
-            # Check if they specify EU regions
-            all_locations = " ".join(data_centers + server_locations).upper()
-            if "EU" in all_locations or "EUROPE" in all_locations or "IRELAND" in all_locations:
-                score -= 12  # Increased from -5 (US cloud provider is still a risk even with EU regions)
-                deductions.append("-12: Using US cloud provider (AWS/GCP/Azure) even with EU regions")
+            all_locations = " ".join(str(l) for l in data_centers + server_locations if l).upper()
+            if _is_eu(all_locations):
+                score -= 8
+                deductions.append("-8: US cloud provider with EU regions (still subject to US jurisdiction)")
                 risk_factors.append(f"Infrastructure uses US cloud provider: {cloud_provider} (subject to US jurisdiction even with EU regions)")
             else:
-                score -= 30  # Increased from -20
-                deductions.append("-30: Using US cloud provider without EU regions specified")
+                score -= 20
+                deductions.append("-20: Using US cloud provider without EU regions specified")
                 risk_factors.append(f"Infrastructure uses US cloud provider: {cloud_provider}, no EU regions mentioned")
-        
-        # Check data center locations (cumulative penalties)
-        us_data_centers = 0
+
+        # Check data center / server locations
+        eu_dc_count = 0
         for dc in data_centers + server_locations:
-            if dc:  # Handle None values
-                dc_upper = str(dc).upper()
-                if "USA" in dc_upper or "UNITED STATES" in dc_upper or "US" in dc_upper:
-                    us_data_centers += 1
-                    score -= 12  # Increased from -10, cumulative
-                    deductions.append(f"-12: Data center in US: {dc}")
+            if dc:
+                dc_str = str(dc)
+                dc_upper = dc_str.upper()
+                if _is_us(dc_upper):
+                    score -= 10
+                    deductions.append(f"-10: Data center in US: {dc}")
                     risk_factors.append(f"Data center located in US: {dc}")
-        
+                elif _is_eu(dc_upper):
+                    eu_dc_count += 1
+
+        # Bonus for EU data centers (up to +9)
+        if eu_dc_count > 0:
+            eu_dc_bonus = min(9, eu_dc_count * 3)
+            score += eu_dc_bonus
+            positive_factors.append(f"Data centers in EU ({eu_dc_count} location{'s' if eu_dc_count > 1 else ''})")
+            logger.info(f"+{eu_dc_bonus}: EU data centers ({eu_dc_count})")
+
         # Check CDN providers
         for cdn in cdn_providers:
-            if cdn:  # Handle None values
+            if cdn:
                 cdn_upper = str(cdn).upper()
                 if "CLOUDFLARE" in cdn_upper:
-                    # Cloudflare is US-based but has EU PoPs - still a risk
+                    score -= 3
+                    deductions.append(f"-3: Cloudflare CDN (US company, but EU PoPs)")
+                    risk_factors.append(f"CDN provider: {cdn} (US company with EU presence)")
+                elif _is_us(cdn_upper):
                     score -= 5
-                    deductions.append(f"-5: Using Cloudflare CDN (US company)")
-                    risk_factors.append(f"CDN provider: {cdn} (US company)")
-                elif "USA" in cdn_upper or "UNITED STATES" in cdn_upper or "US" in cdn_upper:
-                    score -= 8
-                    deductions.append(f"-8: Using US-based CDN: {cdn}")
+                    deductions.append(f"-5: US-based CDN: {cdn}")
                     risk_factors.append(f"US-based CDN provider: {cdn}")
     else:
-        score -= 10
-        deductions.append("-10: No infrastructure information available")
+        score -= 5
+        deductions.append("-5: No infrastructure information available")
         has_complete_info = False
     
-    # 3. Data Flows & Storage (stricter)
+    # 3. Data Flows & Storage
     if data_flows:
         storage_locs = data_flows.get("storage_locations", [])
         processing_locs = data_flows.get("processing_locations", [])
         data_residency = str(data_flows.get("data_residency", "") or "").upper()
-        
-        # Penalize unknown data residency
+
+        # Penalize unknown data residency (light)
         if not data_residency or data_residency == "UNKNOWN":
-            score -= 12
-            deductions.append("-12: Data residency unknown")
+            score -= 5
+            deductions.append("-5: Data residency unknown")
             risk_factors.append("Data residency not disclosed")
             has_complete_info = False
-        
-        # Check storage locations (cumulative, stricter)
-        us_storage_count = 0
+
+        # Check storage locations
+        eu_storage_count = 0
         for loc in storage_locs:
-            if loc:  # Handle None values
+            if loc:
                 loc_upper = str(loc).upper()
-                if "USA" in loc_upper or "UNITED STATES" in loc_upper or "US" in loc_upper:
-                    us_storage_count += 1
-                    score -= 18  # Increased from -15, cumulative
-                    deductions.append(f"-18: Data stored in US: {loc}")
+                if _is_us(loc_upper):
+                    score -= 12
+                    deductions.append(f"-12: Data stored in US: {loc}")
                     risk_factors.append(f"Customer data stored in US: {loc}")
-        
-        # Check processing locations (cumulative, stricter)
-        us_processing_count = 0
+                elif _is_eu(loc_upper):
+                    eu_storage_count += 1
+
+        # Bonus for EU storage (up to +10)
+        if eu_storage_count > 0:
+            eu_storage_bonus = min(10, eu_storage_count * 5)
+            score += eu_storage_bonus
+            positive_factors.append(f"Data stored in EU ({eu_storage_count} location{'s' if eu_storage_count > 1 else ''})")
+            logger.info(f"+{eu_storage_bonus}: EU storage locations ({eu_storage_count})")
+
+        # Check processing locations
+        eu_processing_count = 0
         for loc in processing_locs:
-            if loc:  # Handle None values
+            if loc:
                 loc_upper = str(loc).upper()
-                if "USA" in loc_upper or "UNITED STATES" in loc_upper or "US" in loc_upper:
-                    us_processing_count += 1
-                    score -= 12  # Increased from -10, cumulative
-                    deductions.append(f"-12: Data processed in US: {loc}")
+                if _is_us(loc_upper):
+                    score -= 8
+                    deductions.append(f"-8: Data processed in US: {loc}")
                     risk_factors.append(f"Data processing occurs in US: {loc}")
-        
-        # Data residency (stricter)
+                elif _is_eu(loc_upper):
+                    eu_processing_count += 1
+
+        # Bonus for EU processing (up to +6)
+        if eu_processing_count > 0:
+            eu_proc_bonus = min(6, eu_processing_count * 3)
+            score += eu_proc_bonus
+            positive_factors.append(f"Data processed in EU ({eu_processing_count} location{'s' if eu_processing_count > 1 else ''})")
+
+        # Data residency evaluation
         data_residency = (data_flows.get("data_residency") or "").upper()
         if data_residency == "US":
-            score -= 30  # Increased from -20
-            deductions.append("-30: Data residency explicitly in US")
+            score -= 25
+            deductions.append("-25: Data residency explicitly in US")
             risk_factors.append("Data residency explicitly in US - high sovereignty risk")
         elif data_residency == "GLOBAL":
-            score -= 18  # Increased from -10
-            deductions.append("-18: Global data residency (no EU guarantee)")
+            score -= 10
+            deductions.append("-10: Global data residency (no EU guarantee)")
             risk_factors.append("Data residency is global, no EU-only guarantee")
         elif data_residency == "EU":
-            score += 10  # Bonus
+            score += 10
+            positive_factors.append("EU-only data residency guarantee")
             logger.info("+10: EU-only data residency")
-        # If no storage/processing locations specified but residency is unknown, penalize
+
+        # No locations disclosed at all
         if not storage_locs and not processing_locs and (not data_residency or data_residency == "UNKNOWN"):
-            score -= 8
-            deductions.append("-8: No data storage/processing locations disclosed")
+            score -= 3
+            deductions.append("-3: No data storage/processing locations disclosed")
             risk_factors.append("Data storage and processing locations not disclosed")
     else:
-        score -= 15
-        deductions.append("-15: No data flow information available")
+        score -= 8
+        deductions.append("-8: No data flow information available")
         has_complete_info = False
     
-    # 4. Employee Locations (stricter - data access risk)
+    # 4. Employee & Office Locations
     if company_info:
         emp_locations = company_info.get("employee_locations", [])
         office_locations = company_info.get("office_locations", [])
-        # Filter out None values before joining
         all_emp_locs = " ".join([str(loc) for loc in (emp_locations + office_locations) if loc]).upper()
-        
-        # Count US locations (handle None values)
-        us_office_count = sum(1 for loc in office_locations if loc and ("USA" in str(loc).upper() or "UNITED STATES" in str(loc).upper() or "US" in str(loc).upper()))
-        us_emp_count = sum(1 for loc in emp_locations if loc and ("USA" in str(loc).upper() or "UNITED STATES" in str(loc).upper() or "US" in str(loc).upper()))
-        
-        # If engineering teams are in US, higher risk (cumulative)
-        if "USA" in all_emp_locs or "UNITED STATES" in all_emp_locs:
-            total_us_locations = us_office_count + us_emp_count
-            penalty = min(15, 8 + (total_us_locations * 2))  # Base -8, +2 per additional US location, max -15
+
+        # Count EU and US locations
+        eu_office_count = sum(1 for loc in office_locations if loc and _is_eu(str(loc)))
+        eu_emp_count = sum(1 for loc in emp_locations if loc and _is_eu(str(loc)))
+        us_office_count = sum(1 for loc in office_locations if loc and _is_us(str(loc)))
+        us_emp_count = sum(1 for loc in emp_locations if loc and _is_us(str(loc)))
+
+        # Bonus for EU offices/employees (up to +6)
+        total_eu_locs = eu_office_count + eu_emp_count
+        if total_eu_locs > 0:
+            eu_loc_bonus = min(6, total_eu_locs * 2)
+            score += eu_loc_bonus
+            positive_factors.append(f"EU office/employee presence ({total_eu_locs} location{'s' if total_eu_locs > 1 else ''})")
+            logger.info(f"+{eu_loc_bonus}: EU employee/office locations ({total_eu_locs})")
+
+        # US employees/offices = data access risk
+        total_us_locs = us_office_count + us_emp_count
+        if total_us_locs > 0:
+            penalty = min(12, 6 + (total_us_locs * 2))
             score -= penalty
-            deductions.append(f"-{penalty}: Employees/offices in US (data access risk) - {total_us_locations} US location(s)")
-            risk_factors.append(f"Company has {total_us_locations} US office/employee location(s) - US-based employees can access EU data")
-        
-        # Penalize if no location info provided
+            deductions.append(f"-{penalty}: Employees/offices in US ({total_us_locs} location(s))")
+            risk_factors.append(f"Company has {total_us_locs} US office/employee location(s) - US-based employees can access EU data")
+
+        # No location info at all (light penalty)
         if not emp_locations and not office_locations:
-            score -= 5
-            deductions.append("-5: Employee/office locations not disclosed")
+            score -= 2
+            deductions.append("-2: Employee/office locations not disclosed")
             risk_factors.append("Employee and office locations not disclosed")
             has_complete_info = False
     
-    # 5. Sub-processors (stricter, cumulative)
+    # 5. Sub-processors / Vendors
     us_vendor_count = 0
-    critical_vendor_count = 0
-    
+    eu_vendor_count = 0
+    total_vendor_penalty = 0
+    MAX_VENDOR_PENALTY = 45  # Cap total vendor deductions
+
     for vendor in vendors:
-        # Safely extract vendor fields, handling None values
         location = str(vendor.get("location", "") or "").upper()
         purpose = str(vendor.get("purpose", "") or "").upper()
-        risk = str(vendor.get("risk", "") or "").upper()
         vendor_name = str(vendor.get("name", "Unknown") or "Unknown")
-        
-        
-        if "USA" in location or "UNITED STATES" in location or "US" in location:
+
+        if _is_us(location):
             us_vendor_count += 1
-
-            # NEW: Apply category-based weighting
             category_weight = get_category_weight(purpose)
-            base_penalty = 12
-            weighted_penalty = int(base_penalty * category_weight)
-
-            score -= weighted_penalty
-            deductions.append(f"-{weighted_penalty}: {vendor_name} is US-based ({purpose}, weight={category_weight:.1f})")
+            # Single weighted penalty per US vendor (no double-counting)
+            penalty = int(8 * category_weight)
+            actual_penalty = min(penalty, MAX_VENDOR_PENALTY - total_vendor_penalty)
+            if actual_penalty > 0:
+                score -= actual_penalty
+                total_vendor_penalty += actual_penalty
+                deductions.append(f"-{actual_penalty}: {vendor_name} is US-based ({purpose})")
             risk_factors.append(f"US-based sub-processor: {vendor_name} ({purpose})")
 
-            # Additional penalty for critical categories
-            if "AI" in purpose or "HOSTING" in purpose or "PAYMENT" in purpose or "STORAGE" in purpose:
-                extra_penalty = int(15 * category_weight)
-                score -= extra_penalty
-                deductions.append(f"-{extra_penalty}: {vendor_name} US-based critical service ({purpose})")
-                risk_factors.append(f"US-based critical service: {vendor_name} ({purpose}) - critical sovereignty risk")
-                critical_vendor_count += 1
-        
-        # Check for high-risk AI vendors by name (stricter)
-        if vendor_name and any(ai_vendor in str(vendor_name).upper() for ai_vendor in ["OPENAI", "ANTHROPIC"]):
-            score -= 25  # Increased from -20
-            deductions.append(f"-25: {vendor_name} is high-risk AI vendor")
-            risk_factors.append(f"High-risk AI vendor: {vendor_name} (critical sovereignty risk)")
-            critical_vendor_count += 1
-        
-        # Check for Global location (stricter)
-        if "GLOBAL" in location:
-            score -= 8  # Increased from -5
-            deductions.append(f"-8: {vendor_name} has Global location (uncertain jurisdiction)")
+            # Extra penalty only for high-risk AI vendors (OpenAI, Anthropic)
+            if vendor_name and any(ai_vendor in str(vendor_name).upper() for ai_vendor in ["OPENAI", "ANTHROPIC"]):
+                ai_penalty = min(12, MAX_VENDOR_PENALTY - total_vendor_penalty)
+                if ai_penalty > 0:
+                    score -= ai_penalty
+                    total_vendor_penalty += ai_penalty
+                    deductions.append(f"-{ai_penalty}: {vendor_name} is high-risk AI vendor (US jurisdiction)")
+                risk_factors.append(f"High-risk AI vendor: {vendor_name} (critical sovereignty risk)")
+
+        elif _is_eu(location):
+            eu_vendor_count += 1
+
+        elif "GLOBAL" in location:
+            penalty = min(5, MAX_VENDOR_PENALTY - total_vendor_penalty)
+            if penalty > 0:
+                score -= penalty
+                total_vendor_penalty += penalty
+                deductions.append(f"-{penalty}: {vendor_name} has Global location (uncertain jurisdiction)")
             risk_factors.append(f"Global sub-processor (uncertain jurisdiction): {vendor_name}")
-        
-        # Penalize unknown vendor locations
-        if not location or location == "UNKNOWN":
-            score -= 5
-            deductions.append(f"-5: {vendor_name} location unknown")
+
+        elif not location or location == "UNKNOWN":
+            penalty = min(3, MAX_VENDOR_PENALTY - total_vendor_penalty)
+            if penalty > 0:
+                score -= penalty
+                total_vendor_penalty += penalty
+                deductions.append(f"-{penalty}: {vendor_name} location unknown")
             risk_factors.append(f"Sub-processor location unknown: {vendor_name}")
-    
-    # Additional penalty for multiple US vendors (cumulative risk)
-    if us_vendor_count > 3:
-        extra_penalty = (us_vendor_count - 3) * 2
+
+    # Bonus for EU-based vendors (up to +10)
+    if eu_vendor_count > 0:
+        eu_vendor_bonus = min(10, eu_vendor_count * 2)
+        score += eu_vendor_bonus
+        positive_factors.append(f"{eu_vendor_count} EU-based sub-processor{'s' if eu_vendor_count > 1 else ''}")
+        logger.info(f"+{eu_vendor_bonus}: EU vendors ({eu_vendor_count})")
+
+    # Cumulative US vendor warning (informational, light penalty)
+    if us_vendor_count > 5:
+        extra_penalty = min(5, (us_vendor_count - 5))
         score -= extra_penalty
-        deductions.append(f"-{extra_penalty}: Multiple US vendors ({us_vendor_count} total) - cumulative risk")
-        risk_factors.append(f"Multiple US sub-processors ({us_vendor_count}) increase cumulative sovereignty risk")
+        deductions.append(f"-{extra_penalty}: High US vendor concentration ({us_vendor_count} total)")
+        risk_factors.append(f"High concentration of US sub-processors ({us_vendor_count}) increases cumulative sovereignty risk")
     
-    # 6. Compliance & Certifications (NEW - stricter)
+    # 6. Compliance & Certifications
     if compliance:
         gdpr_status = str(compliance.get("gdpr_status", "") or "").upper()
         certifications = compliance.get("certifications", []) or []
         recent_incidents = compliance.get("recent_incidents", []) or []
         data_residency_guarantees = str(compliance.get("data_residency_guarantees", "") or "").upper()
-        
+
         # GDPR compliance status
         if not gdpr_status or gdpr_status == "UNKNOWN":
-            score -= 10
-            deductions.append("-10: GDPR compliance status unknown")
+            score -= 5
+            deductions.append("-5: GDPR compliance status unknown")
             risk_factors.append("GDPR compliance status not disclosed")
             has_complete_info = False
         elif "NON-COMPLIANT" in gdpr_status or "NOT COMPLIANT" in gdpr_status:
-            score -= 25
-            deductions.append("-25: GDPR non-compliant")
+            score -= 20
+            deductions.append("-20: GDPR non-compliant")
             risk_factors.append("GDPR non-compliance - critical risk")
         elif "COMPLIANT" in gdpr_status or "COMPLIANCE" in gdpr_status:
-            # Small bonus for explicit compliance
-            score += 3
-            logger.info("+3: Explicit GDPR compliance stated")
-        
-        # Missing certifications (penalize lack of transparency)
-        if not certifications or len(certifications) == 0:
-            score -= 5
-            deductions.append("-5: No compliance certifications disclosed")
+            score += 5
+            positive_factors.append("GDPR compliance stated")
+            logger.info("+5: GDPR compliance stated")
+
+        # Certifications
+        if certifications and len(certifications) > 0:
+            cert_bonus = min(5, len(certifications) * 2)
+            score += cert_bonus
+            positive_factors.append(f"{len(certifications)} compliance certification{'s' if len(certifications) > 1 else ''} ({', '.join(str(c) for c in certifications[:3])})")
+            logger.info(f"+{cert_bonus}: Certifications ({len(certifications)})")
+        else:
+            score -= 3
+            deductions.append("-3: No compliance certifications disclosed")
             risk_factors.append("No compliance certifications (SOC 2, ISO 27001, etc.) disclosed")
-        
+
         # Recent security incidents
         if recent_incidents and len(recent_incidents) > 0:
-            incident_penalty = min(20, len(recent_incidents) * 8)
+            incident_penalty = min(15, len(recent_incidents) * 6)
             score -= incident_penalty
             deductions.append(f"-{incident_penalty}: Recent security incidents ({len(recent_incidents)} reported)")
-            risk_factors.append(f"Recent security incidents: {len(recent_incidents)} reported - data sovereignty risk")
-        
+            risk_factors.append(f"Recent security incidents: {len(recent_incidents)} reported")
+
         # Data residency guarantees
-        if not data_residency_guarantees or data_residency_guarantees == "UNKNOWN":
-            score -= 8
-            deductions.append("-8: Data residency guarantees not disclosed")
+        if data_residency_guarantees and data_residency_guarantees != "UNKNOWN" and "NONE" not in data_residency_guarantees:
+            score += 3
+            positive_factors.append("Data residency guarantees disclosed")
+        elif not data_residency_guarantees or data_residency_guarantees == "UNKNOWN":
+            score -= 3
+            deductions.append("-3: Data residency guarantees not disclosed")
             risk_factors.append("Data residency guarantees not disclosed")
     else:
-        score -= 12
-        deductions.append("-12: No compliance information available")
-        has_complete_info = False
-    
-    # 7. Penalty for incomplete information (transparency matters)
-    if not has_complete_info:
         score -= 5
-        deductions.append("-5: Incomplete information disclosure (transparency penalty)")
-        risk_factors.append("Incomplete information disclosure reduces trust")
-    
+        deductions.append("-5: No compliance information available")
+        has_complete_info = False
+
+    # 7. Transparency penalty (light)
+    if not has_complete_info:
+        score -= 2
+        deductions.append("-2: Incomplete information disclosure")
+        risk_factors.append("Some information not disclosed (transparency gap)")
+
     # Ensure score is between 0 and 100
     score = max(0, min(100, score))
-    
-    # Stricter risk level thresholds
-    if score < 60:  # Changed from < 70
+
+    # Risk level thresholds
+    if score < 50:
         risk_level = "High"
-    elif score < 80:  # Changed from < 90
+    elif score < 75:
         risk_level = "Medium"
     else:
         risk_level = "Low"
-    
-    logger.info(f"📊 Strict sovereignty score calculation complete: {score}/100 ({risk_level} risk)")
+
+    logger.info(f"📊 Sovereignty score calculation complete: {score}/100 ({risk_level} risk)")
+    logger.info(f"📈 Positive factors: {len(positive_factors)}")
     if deductions:
-        logger.info(f"📉 Deductions applied: {', '.join(deductions[:10])}")  # Show first 10
+        logger.info(f"📉 Deductions applied: {', '.join(deductions[:10])}")
     if risk_factors:
         logger.info(f"⚠️ Risk factors identified: {len(risk_factors)} total")
-    
-    return score, risk_level, risk_factors
+
+    return score, risk_level, risk_factors, positive_factors
 
 
 # =============================================================================
@@ -2047,18 +2134,27 @@ async def analyze_url(request: AnalyzeRequest):
             risk_factors=[
                 "Company has US office location - US-based employees can access EU data",
                 "Infrastructure uses US cloud provider: AWS (subject to US jurisdiction even with EU regions)",
-                "Using Fly.io (US company) even with EU server regions",
-                "CDN provider: Cloudflare (US company)",
-                "US-based critical service: OpenAI (AI/ML) - critical sovereignty risk",
-                "US-based critical service: Stripe (Payment Processing) - critical sovereignty risk",
+                "Using Fly.io (US company) with EU server regions",
+                "CDN provider: Cloudflare (US company with EU presence)",
+                "US-based sub-processor: OpenAI (AI/ML)",
+                "US-based sub-processor: Stripe (Payment Processing)",
                 "US-based sub-processor: Intercom (Customer Support)",
                 "US-based sub-processor: SendGrid (Email Service)",
                 "US-based sub-processor: Datadog (Monitoring)",
                 "US-based sub-processor: Sentry (Error Tracking)",
                 "US-based sub-processor: Google Analytics (Analytics)",
                 "Data residency is global, no EU-only guarantee",
-                "Multiple US sub-processors (7) increase cumulative sovereignty risk",
-                "Recent security incidents: 1 reported - data sovereignty risk",
+                "Recent security incidents: 1 reported",
+            ],
+            positive_factors=[
+                "Company registered in EU (Germany)",
+                "EU office/employee presence (3 locations)",
+                "Data centers in EU (1 location)",
+                "Data stored in EU (1 location)",
+                "GDPR compliance stated",
+                "3 compliance certifications (SOC 2 Type II, ISO 27001, GDPR Art. 28 DPA)",
+                "Data residency guarantees disclosed",
+                "2 EU-based sub-processors",
             ],
             detected_services=[
                 DetectedService(
@@ -2225,12 +2321,12 @@ async def analyze_url(request: AnalyzeRequest):
         logger.info(f"   Vendors: {len(vendors_data)}")
         logger.info(f"   Infrastructure: cloud={infrastructure_data.get('cloud_provider')}, hosting={infrastructure_data.get('hosting_platform')}")
         logger.info(f"   Compliance: gdpr={compliance_data.get('gdpr_status')}, incidents={len(compliance_data.get('recent_incidents', []))}")
-        score, risk_level, risk_factors = calculate_score(
-            vendors_data, 
-            company_info_data, 
-            infrastructure_data, 
+        score, risk_level, risk_factors, positive_factors = calculate_score(
+            vendors_data,
+            company_info_data,
+            infrastructure_data,
             data_flows_data,
-            compliance_data  # Pass compliance data to scoring function
+            compliance_data
         )
         logger.info(f"📊 Score result: {score}/100 ({risk_level} risk)")
         
@@ -2352,7 +2448,8 @@ async def analyze_url(request: AnalyzeRequest):
             compliance=compliance,
             additional_findings=additional_findings,
             company_research=company_research,
-            risk_factors=risk_factors[:20],  # Limit to 20 most important
+            risk_factors=risk_factors[:20],
+            positive_factors=positive_factors[:10],
             detected_services=detected_services_formatted
         )
     
