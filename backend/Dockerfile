@@ -8,11 +8,12 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements and install Python dependencies
-COPY requirements.txt .
+# Paths assume build context is repo root (e.g. Render: docker build -f backend/Dockerfile .)
+COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
-COPY . .
+COPY backend/ .
 
 # Expose port (Railway, Render, etc. will set PORT env var)
 EXPOSE 8000
