@@ -942,15 +942,19 @@ def scrape_multiple_pages(base_url: str) -> dict[str, str]:
         f"=== {page_name.upper()} ===\n{content[:5000]}"  # Limit each page to 5000 chars
         for page_name, content in scraped_pages.items()
     ])
-    
+
     if infrastructure_note:
         combined_text = infrastructure_note + "\n\n" + combined_text
-    
+
     # Total limit of 20,000 characters
     if len(combined_text) > 20000:
         combined_text = combined_text[:20000]
-    
-    logger.info(f"📚 Scraped {len(scraped_pages)} pages, total text: {len(combined_text)} characters")
+
+    # Log results - even if no pages were scraped, continue (will be flagged as risk)
+    if len(scraped_pages) == 0:
+        logger.warning(f"⚠️ No pages successfully scraped from {base_url} - this will be flagged as a transparency risk")
+    else:
+        logger.info(f"📚 Scraped {len(scraped_pages)} pages, total text: {len(combined_text)} characters")
     if detected_infrastructure["cloud_provider"] != "Unknown" or detected_infrastructure["hosting_platform"] != "Unknown":
         logger.info(f"🔍 Infrastructure detected: {detected_infrastructure}")
     logger.info(f"🎯 Total detected services from resources: {len(all_detected_services)}")
@@ -2502,9 +2506,13 @@ async def analyze_url(request: AnalyzeRequest):
         logger.info(f"✅ Scraping successful: {len(pages_scraped)} pages scraped, {len(combined_text)} total characters")
         logger.info(f"📄 Pages found: {', '.join(pages_scraped.keys())}")
         
+        # Handle minimal/no text extraction - treat as red flag, not failure
+        low_text_extraction = len(combined_text.strip()) < 100
         if not combined_text or len(combined_text.strip()) < 10:
-            combined_text = f"Website at {url} — minimal content could be extracted. Domain: {url}"
-            logger.warning(f"⚠️ Very little text extracted, proceeding with limited info")
+            combined_text = f"Website at {url} — minimal or no content could be extracted. This may indicate anti-scraping measures, authentication requirements, or JavaScript-heavy site. Domain: {url}"
+            logger.warning(f"⚠️ Very little text extracted ({len(combined_text)} chars), proceeding with limited info - will flag as risk")
+        elif low_text_extraction:
+            logger.warning(f"⚠️ Low text extraction ({len(combined_text)} chars) - will flag as risk")
 
         # Analyze with Gemini (run in thread pool to avoid blocking)
         logger.info("📥 Step 2/5: Analyzing scraped content with Gemini AI...")
@@ -2619,6 +2627,29 @@ async def analyze_url(request: AnalyzeRequest):
             compliance_data
         )
         logger.info(f"📊 Score result: {score}/100 ({risk_level} risk)")
+
+        # Add risk factor for low/no text extraction
+        if low_text_extraction:
+            if len(combined_text.strip()) < 10:
+                risk_factors.insert(0, "⚠️ Critical: Could not extract meaningful content from website - possible anti-scraping measures, authentication wall, or JavaScript-heavy site limiting transparency")
+                score = max(0, score - 15)  # Additional penalty for critical lack of transparency
+                logger.warning(f"📉 Applied -15 penalty for critical lack of extractable content. New score: {score}")
+            elif len(pages_scraped) == 0:
+                risk_factors.insert(0, "⚠️ Warning: No pages could be scraped - website may block automated access or require authentication")
+                score = max(0, score - 10)
+                logger.warning(f"📉 Applied -10 penalty for no pages scraped. New score: {score}")
+            else:
+                risk_factors.append("Limited website content extracted - may indicate restricted access or minimal public information")
+                score = max(0, score - 5)
+                logger.warning(f"📉 Applied -5 penalty for limited text extraction. New score: {score}")
+
+        # Recalculate risk level after additional penalties
+        if score < 50:
+            risk_level = "High"
+        elif score < 75:
+            risk_level = "Medium"
+        else:
+            risk_level = "Low"
         
         # Prepare additional findings (compliance is separate field in response)
         additional_findings = AdditionalFindings(
