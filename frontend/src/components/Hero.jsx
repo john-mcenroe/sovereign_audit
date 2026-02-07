@@ -68,7 +68,7 @@ function Hero({ onAnalyze, error }) {
       {/* Background — faded so content stays readable */}
       <div
         className="absolute inset-0 bg-cover bg-center bg-no-repeat"
-        style={{ backgroundImage: 'url(/chatgpt-background.png)' }}
+        style={{ backgroundImage: 'url(/eu_sovereign_map_image_latest.png)' }}
         aria-hidden="true"
       />
       <div className="absolute inset-0 bg-white/75" aria-hidden="true" />
